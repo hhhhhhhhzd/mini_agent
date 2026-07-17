@@ -728,4 +728,4 @@ $env:MINI_AGENT_API_KEY = "你的 API Key"
 
 当前代码基线为 `v0.1.0`，用于验证固定模型、SSE、Tool Loop、Session、压缩、Skills、Hooks、MCP Tools、ACP 文本协议和 Windows CLI 可以组成最小闭环。
 
-`v0.2.0` 将集中建设可靠运行层，包括 Run/Turn 生命周期、同 Session 串行控制、统一取消、模型瞬时错误重试、崩溃恢复、数据库迁移和工具原子写入。详细范围和验收条件见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+`v0.2.0` 将集中建设可靠 Turn 与会话控制：同 Session FIFO、统一取消、模型安全重试、崩溃恢复、数据库迁移、主动 `/zip` 压缩，以及 CLI/ACP 共用的 `/new`、`/list`、`/resume`、`/zip`。本版本不实现工作区切换，也不扩展 ACP 多媒体或完整 MCP 能力。详细范围、命令语义和验收条件见 [docs/ROADMAP.md](docs/ROADMAP.md)。
