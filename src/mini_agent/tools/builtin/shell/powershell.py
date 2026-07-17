@@ -63,6 +63,9 @@ async def powershell_exec(arguments: dict[str, Any], context: ToolExecutionConte
     except asyncio.TimeoutError:
         await _terminate_process_tree(process)
         raise TimeoutError(f"PowerShell command timed out after {timeout:g}s")
+    except asyncio.CancelledError:
+        await asyncio.shield(_terminate_process_tree(process))
+        raise
     output = stdout.decode("utf-8", errors="replace")
     error = stderr.decode("utf-8", errors="replace")
     rendered = (

@@ -14,6 +14,7 @@ from mini_agent.tools import ToolExecutor, ToolRegistry
 from mini_agent.tools.builtin import register_builtin_tools
 from mini_agent.tools.permissions import CliPermissionBroker, PermissionBroker, PermissionManager
 from mini_agent.tools.providers.mcp import McpManager, load_mcp_config
+from mini_agent.turns.manager import TurnManager
 
 
 def build_application(
@@ -57,6 +58,7 @@ def build_application(
     )
     skills = SkillRegistry(SkillLoader(), [config.data_dir / "skills"])
     sessions = SqliteSessionStore(config.data_dir / "agent.db")
+    turns = TurnManager(sessions)
     runtime = AgentRuntime(model=model, tools=executor, hooks=hooks)
     app = AgentApplication(
         runtime=runtime,
@@ -65,6 +67,7 @@ def build_application(
         skills=skills,
         tools=executor,
         hooks=hooks,
+        turns=turns,
         startup=(mcp.connect_all,),
         shutdown=(model.close, mcp.close),
     )

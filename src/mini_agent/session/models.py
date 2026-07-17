@@ -23,6 +23,7 @@ class Session:
     created_at: datetime
     updated_at: datetime
     archived_at: datetime | None = None
+    name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -38,3 +39,7 @@ class SessionCheckpoint:
     summary: str
     version: str
     created_at: datetime
+    trigger: str = "automatic"
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    details: dict[str, object] | None = None
