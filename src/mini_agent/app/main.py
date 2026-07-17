@@ -8,6 +8,7 @@ from pathlib import Path
 
 from mini_agent.app.factory import build_application
 from mini_agent.config import AgentConfig
+from mini_agent.commands import CommandDispatcher
 from mini_agent.core.types import (
     AgentError,
     HookNotice,
@@ -77,8 +78,12 @@ async def _run_chat(args: argparse.Namespace, config: AgentConfig) -> int:
             session = await app.resume_session(args.session)
         else:
             session = await app.create_session(config.workspace_root)
+        commands = CommandDispatcher(app, config.workspace_root)
         print(f"Session: {session.id}")
-        print("Commands: /exit, /archive, /skill <name>, /unskill <name>")
+        print(
+            "Commands: /new [name], /list, /resume <id|name>, /zip, "
+            "/exit, /archive, /skill <name>, /unskill <name>"
+        )
         while True:
             try:
                 prompt = (await asyncio.to_thread(input, "You> ")).strip()
@@ -100,6 +105,17 @@ async def _run_chat(args: argparse.Namespace, config: AgentConfig) -> int:
                 name = prompt.split(maxsplit=1)[1]
                 await app.deactivate_skill(session.id, name)
                 print(f"Deactivated skill: {name}")
+                continue
+
+            command = await commands.dispatch(prompt, session_id=session.id)
+            if command.handled:
+                if command.error:
+                    print(f"[command error: {command.error}]")
+                elif command.output:
+                    print(command.output)
+                if command.session_id and command.session_id != session.id:
+                    session = await app.resume_session(command.session_id)
+                    print(f"Session: {session.id}")
                 continue
 
             print("Agent> ", end="", flush=True)

@@ -30,6 +30,22 @@ class ContextBuilder:
         self._budget = budget
         self._compressor = compressor
 
+    async def compress_history(
+        self,
+        messages: Sequence[Message],
+        *,
+        existing_summary: str | None,
+        target_remaining_tokens: int = 0,
+    ) -> CompressionResult | None:
+        return await self._compressor.compress(
+            messages,
+            existing_summary=existing_summary,
+            target_remaining_tokens=target_remaining_tokens,
+        )
+
+    def estimate_messages(self, messages: Sequence[Message]) -> int:
+        return self._budget.estimate_messages(messages)
+
     async def build(
         self,
         *,

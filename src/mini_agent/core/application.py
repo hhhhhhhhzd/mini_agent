@@ -20,6 +20,7 @@ from mini_agent.core.types import (
 )
 from mini_agent.hooks.dispatcher import HookDispatcher
 from mini_agent.session.models import Session, SessionState
+from mini_agent.session.models import SessionCheckpoint
 from mini_agent.session.store import SqliteSessionStore
 from mini_agent.skills.models import LoadedSkill, SkillMetadata
 from mini_agent.skills.registry import SkillRegistry
@@ -81,6 +82,9 @@ class AgentApplication:
             name=name,
         )
 
+    async def get_session(self, session_id: str) -> Session:
+        return await self._sessions.get(session_id)
+
     async def list_sessions(
         self,
         *,
@@ -107,6 +111,37 @@ class AgentApplication:
     async def session_history(self, session_id: str) -> list[Message]:
         await self._sessions.get(session_id)
         return [record.message for record in await self._sessions.load_messages(session_id)]
+
+    async def compact_session(
+        self, session_id: str, *, trigger: str = "manual"
+    ) -> SessionCheckpoint | None:
+        await self._sessions.get(session_id)
+        checkpoint = await self._sessions.latest_checkpoint(session_id)
+        records = await self._sessions.load_messages(
+            session_id,
+            after_seq=checkpoint.through_seq if checkpoint else 0,
+        )
+        messages = [record.message for record in records]
+        compression = await self._context.compress_history(
+            messages,
+            existing_summary=checkpoint.summary if checkpoint else None,
+        )
+        if compression is None:
+            return None
+        through_seq = records[compression.through_seq - 1].seq
+        input_tokens = self._context.estimate_messages(messages[: compression.through_seq])
+        output_tokens = self._context.estimate_messages(
+            [Message(role="system", content=compression.summary)]
+        )
+        return await self._sessions.save_checkpoint(
+            session_id,
+            through_seq=through_seq,
+            summary=compression.summary,
+            version=compression.version,
+            trigger=trigger,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
 
     async def record_interruption(self, session_id: str, reason: str) -> None:
         await self._sessions.append_event(
