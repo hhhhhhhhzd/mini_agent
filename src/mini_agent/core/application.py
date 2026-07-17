@@ -129,18 +129,15 @@ class AgentApplication:
         if compression is None:
             return None
         through_seq = records[compression.through_seq - 1].seq
-        input_tokens = self._context.estimate_messages(messages[: compression.through_seq])
-        output_tokens = self._context.estimate_messages(
-            [Message(role="system", content=compression.summary)]
-        )
         return await self._sessions.save_checkpoint(
             session_id,
             through_seq=through_seq,
             summary=compression.summary,
             version=compression.version,
             trigger=trigger,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
+            input_tokens=compression.input_tokens,
+            output_tokens=compression.output_tokens,
+            details={"stage_count": compression.stage_count},
         )
 
     async def record_interruption(self, session_id: str, reason: str) -> None:
@@ -272,6 +269,15 @@ class AgentApplication:
                 ]
             },
         )
+        if build_result.compression_error:
+            await self._sessions.append_event(
+                session_id,
+                "compression_failed",
+                {
+                    "trigger": "automatic",
+                    "error": build_result.compression_error,
+                },
+            )
         if build_result.compression:
             count = build_result.compression.through_seq
             if count > 0 and count <= len(records):
@@ -281,6 +287,10 @@ class AgentApplication:
                     through_seq=through_seq,
                     summary=build_result.compression.summary,
                     version=build_result.compression.version,
+                    trigger="automatic",
+                    input_tokens=build_result.compression.input_tokens,
+                    output_tokens=build_result.compression.output_tokens,
+                    details={"stage_count": build_result.compression.stage_count},
                 )
 
         async for event in self._runtime.run(

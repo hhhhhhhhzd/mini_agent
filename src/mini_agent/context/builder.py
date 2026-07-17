@@ -16,6 +16,7 @@ class ContextBuildResult:
     tools: list[ToolSpec]
     compression: CompressionResult | None
     rules: tuple[SystemRuleBlock, ...]
+    compression_error: str | None = None
 
 
 class ContextBuilder:
@@ -82,18 +83,22 @@ class ContextBuilder:
             )
         candidate = prefix + history
         compression: CompressionResult | None = None
+        compression_error: str | None = None
         if self._budget.estimate_total(candidate, tools) >= self._budget.trigger_tokens:
             fixed_tokens = self._budget.estimate_total(prefix, tools)
             # Reserve room for the generated checkpoint itself.
             summary_reserve = min(8_192, max(1_024, self._budget.context_window // 20))
-            compression = await self._compressor.compress(
-                history,
-                existing_summary=existing_summary,
-                target_remaining_tokens=max(
-                    0,
-                    self._budget.target_tokens - fixed_tokens - summary_reserve,
-                ),
-            )
+            try:
+                compression = await self._compressor.compress(
+                    history,
+                    existing_summary=existing_summary,
+                    target_remaining_tokens=max(
+                        0,
+                        self._budget.target_tokens - fixed_tokens - summary_reserve,
+                    ),
+                )
+            except Exception as exc:
+                compression_error = f"{type(exc).__name__}: {exc}"
             if compression:
                 history = history[compression.through_seq :]
                 candidate = [
@@ -109,5 +114,6 @@ class ContextBuilder:
             tools=list(tools),
             compression=compression,
             rules=tuple(rule_blocks),
+            compression_error=compression_error,
         )
         return result.messages, result.tools, result

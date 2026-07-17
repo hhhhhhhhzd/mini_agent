@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from mini_agent.context.builder import ContextBuilder
 from mini_agent.context.compression import COMPRESSION_VERSION, FixedCompressor
 from mini_agent.context.system_rules import SystemRuleLoader
 from mini_agent.context.token_budget import TokenBudget
@@ -17,6 +18,25 @@ class SummaryModel:
         assert "Previous checkpoint" in (messages[-1].content or "") or "New events" not in (messages[-1].content or "")
         yield TextDelta("Goal\ncontinue\nPending Work\ntest")
         yield ModelResponseCompleted({"total_tokens": 10}, "stop")
+
+
+class StagedSummaryModel:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def stream(self, messages, tools=()):
+        self.calls += 1
+        yield TextDelta(f"stage-{self.calls}")
+        yield ModelResponseCompleted(
+            {"prompt_tokens": 11, "completion_tokens": 3, "total_tokens": 14},
+            "stop",
+        )
+
+
+class FailingSummaryModel:
+    async def stream(self, messages, tools=()):
+        raise RuntimeError("summary unavailable")
+        yield  # pragma: no cover
 
 
 @pytest.mark.asyncio
@@ -57,6 +77,54 @@ def test_compression_selects_turn_boundary_and_keeps_tool_pair() -> None:
     assert selected[-1].role == "assistant"
     assert any(message.tool_call_id == "call1" for message in selected)
     assert messages[len(selected)].role == "user"
+
+
+@pytest.mark.asyncio
+async def test_oversized_compression_uses_stages_and_reports_metadata() -> None:
+    model = StagedSummaryModel()
+    compressor = FixedCompressor(model, TokenBudget(400))
+    messages = [
+        Message(role="user", content="first " * 300),
+        Message(role="assistant", content="answer " * 300),
+        Message(role="user", content="latest"),
+        Message(role="assistant", content="reply"),
+    ]
+    result = await compressor.compress(messages, target_remaining_tokens=0)
+    assert result is not None
+    assert result.stage_count > 1
+    assert model.calls == result.stage_count
+    assert result.input_tokens == result.stage_count * 11
+    assert result.output_tokens == result.stage_count * 3
+
+
+@pytest.mark.asyncio
+async def test_automatic_compression_failure_falls_back_without_checkpoint(
+    tmp_path: Path,
+) -> None:
+    budget = TokenBudget(100, trigger_ratio=0.1, target_ratio=0.05)
+    builder = ContextBuilder(
+        rules=SystemRuleLoader(global_data_dir=tmp_path / "global"),
+        budget=budget,
+        compressor=FixedCompressor(FailingSummaryModel(), budget),
+    )
+    messages = [
+        Message(role="user", content="old " * 100),
+        Message(role="assistant", content="answer " * 100),
+        Message(role="user", content="new"),
+    ]
+    built, _, result = await builder.build(
+        session_id="s1",
+        project_root=tmp_path,
+        messages=messages,
+        session_rules=None,
+        existing_summary=None,
+        skill_instructions=(),
+        additional_context=(),
+        tools=(),
+    )
+    assert result.compression is None
+    assert "summary unavailable" in (result.compression_error or "")
+    assert any(message.content == "old " * 100 for message in built)
 
 
 def test_system_rule_precedence_and_hashes(tmp_path: Path) -> None:
