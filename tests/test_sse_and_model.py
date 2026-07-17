@@ -206,3 +206,40 @@ async def test_model_never_retries_after_visible_output() -> None:
     assert failure.retryable
     assert not failure.will_retry
     await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_model_never_retries_after_tool_call() -> None:
+    requests = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=(
+                b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+                b'"id":"c1","function":{"name":"read_file",'
+                b'"arguments":"{\\"path\\":\\"a.txt\\"}"}}]},'
+                b'"finish_reason":"tool_calls"}]}\n\n'
+            ),
+        )
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    model = FixedModelClient(
+        api_key="secret",
+        base_url="https://example.invalid/v1",
+        model_id="fixed",
+        http_client=http,
+    )
+    events = []
+    with pytest.raises(ModelAPIError):
+        async for event in model.stream([Message(role="user", content="hello")]):
+            events.append(event)
+    assert requests == 1
+    assert ToolCall("c1", "read_file", {"path": "a.txt"}) in events
+    assert not next(
+        event for event in events if isinstance(event, ModelAttemptFailed)
+    ).will_retry
+    await http.aclose()

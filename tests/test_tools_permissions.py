@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import os
 import hashlib
+import asyncio
+import subprocess
 
 import pytest
 
@@ -17,6 +19,8 @@ from mini_agent.tools.permissions import (
     PermissionManager,
     PermissionMode,
 )
+from mini_agent.tools.builtin.shell.powershell import powershell_exec
+from mini_agent.tools.types import ToolExecutionContext
 
 
 class RecordingBroker:
@@ -247,3 +251,38 @@ async def test_write_and_patch_use_expected_hash_guard(tmp_path: Path) -> None:
     assert stale.is_error
     assert "File changed since it was read" in stale.content
     assert target.read_text(encoding="utf-8") == "middle"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows process-tree behavior")
+@pytest.mark.asyncio
+async def test_cancelled_powershell_terminates_child_process(tmp_path: Path) -> None:
+    pid_file = tmp_path / "child.pid"
+    command = (
+        "$child = Start-Process powershell.exe -ArgumentList "
+        "'-NoProfile','-Command','Start-Sleep -Seconds 120' -PassThru; "
+        "$child.Id | Set-Content -Path child.pid; Start-Sleep -Seconds 120"
+    )
+    task = asyncio.create_task(
+        powershell_exec(
+            {"command": command, "timeout_seconds": 120},
+            ToolExecutionContext("s1", tmp_path),
+        )
+    )
+    for _ in range(100):
+        if pid_file.exists() and pid_file.read_text(encoding="utf-8").strip():
+            break
+        await asyncio.sleep(0.05)
+    assert pid_file.exists()
+    child_pid = int(pid_file.read_text(encoding="utf-8").strip())
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.sleep(0.2)
+    listing = subprocess.run(
+        ["tasklist", "/FI", f"PID eq {child_pid}", "/FO", "CSV", "/NH"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert f'"{child_pid}"' not in listing.stdout

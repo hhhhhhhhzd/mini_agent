@@ -145,6 +145,24 @@ class AgentApplication:
             session_id, "interrupted", {"reason": reason}
         )
 
+    async def record_command(
+        self,
+        session_id: str,
+        *,
+        name: str,
+        argument: str | None,
+        result_session_id: str | None = None,
+    ) -> None:
+        await self._sessions.append_event(
+            session_id,
+            "command",
+            {
+                "name": name,
+                "argument": argument,
+                "result_session_id": result_session_id,
+            },
+        )
+
     async def cancel_turn(self, session_id: str) -> bool:
         return await self._turns.cancel(session_id)
 

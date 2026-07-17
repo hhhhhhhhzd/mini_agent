@@ -41,6 +41,8 @@ class FakeApplication:
         self.sessions = {self.session.id: self.session}
         self.bindings: dict[str, str] = {}
         self.created = 0
+        self.commands = []
+        self.run_sessions = []
 
     async def create_session(self, root: Path, *, name: str | None = None):
         self.created += 1
@@ -68,6 +70,7 @@ class FakeApplication:
         return [Message(role="user", content="old"), Message(role="assistant", content="reply")]
     async def run_turn(self, session_id: str, prompt: str):
         assert prompt == "hello"
+        self.run_sessions.append(session_id)
         yield TextDelta("answer")
         call = ToolCall("c1", "read_file", {"path": "x"})
         yield ToolStarted(call)
@@ -79,6 +82,8 @@ class FakeApplication:
         return self.bindings.get(f"{channel}:{external_session_id}")
     async def cancel_turn(self, session_id: str): return True
     async def compact_session(self, session_id: str, *, trigger: str = "manual"): return None
+    async def record_command(self, session_id: str, *, name: str, argument: str | None, result_session_id: str | None = None):
+        self.commands.append((session_id, name, argument, result_session_id))
     @asynccontextmanager
     async def session_gate(self, session_id: str):
         yield
@@ -153,6 +158,16 @@ async def test_acp_commands_share_dispatcher_and_switch_binding(tmp_path: Path) 
         and "Created session" in update.content.text
         for _, update in client.updates
     )
+
+    restarted = AcpAgent(app, AcpPermissionBroker())  # type: ignore[arg-type]
+    restarted_client = FakeClient()
+    restarted.on_connect(restarted_client)  # type: ignore[arg-type]
+    await restarted.resume_session("s1", str(tmp_path))
+    await restarted.prompt(
+        "s1",
+        [TextContentBlock(type="text", text="hello")],
+    )
+    assert app.run_sessions[-1] == "s2"
 
     response = await agent.prompt(
         created.session_id,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
+import asyncio
 
 import mcp.types as mt
 import pytest
@@ -131,3 +132,45 @@ async def test_one_mcp_startup_failure_does_not_disable_other_servers(
         assert not result.is_error and "still-alive" in result.content
     finally:
         await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_cancellation_propagates_to_client(tmp_path: Path) -> None:
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    tool = mt.Tool(
+        name="wait",
+        inputSchema={"type": "object", "additionalProperties": False},
+        annotations=mt.ToolAnnotations(readOnlyHint=True),
+    )
+
+    class Page:
+        tools = [tool]
+        nextCursor = None
+
+    class FakeSession:
+        async def list_tools(self, cursor=None): return Page()
+        async def call_tool(self, name, arguments, read_timeout_seconds=None):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+    registry = ToolRegistry()
+    manager = McpManager(registry, [])
+    await manager._register_server_tools("fake", FakeSession())  # type: ignore[arg-type]
+    executor = ToolExecutor(registry, PermissionManager(AllowPermissionBroker()))
+    task = asyncio.create_task(
+        executor.execute(
+            ToolCall("1", "mcp__fake__wait", {}),
+            session_id="s",
+            workspace_root=tmp_path,
+        )
+    )
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert cancelled.is_set()

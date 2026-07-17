@@ -25,6 +25,15 @@ class CommandApplication(Protocol):
 
     def session_gate(self, session_id: str) -> AsyncContextManager[None]: ...
 
+    async def record_command(
+        self,
+        session_id: str,
+        *,
+        name: str,
+        argument: str | None,
+        result_session_id: str | None = None,
+    ) -> None: ...
+
 
 class CommandDispatcher:
     """Shared command semantics used by CLI and protocol adapters."""
@@ -56,6 +65,11 @@ class CommandDispatcher:
                 project_root=self._project_root
             )
             lines = [self._format_session(item, current_session_id) for item in sessions]
+            await self._application.record_command(
+                current_session_id,
+                name="list",
+                argument=None,
+            )
             return CommandResult(
                 handled=True,
                 session_id=current_session_id,
@@ -67,6 +81,12 @@ class CommandDispatcher:
                 session = await self._application.create_session(
                     self._project_root,
                     name=command.argument,
+                )
+                await self._application.record_command(
+                    current_session_id,
+                    name="new",
+                    argument=command.argument,
+                    result_session_id=session.id,
                 )
                 return CommandResult(
                     handled=True,
@@ -81,6 +101,12 @@ class CommandDispatcher:
                     self._project_root,
                 )
                 session = await self._application.resume_session(session.id)
+                await self._application.record_command(
+                    current_session_id,
+                    name="resume",
+                    argument=command.argument,
+                    result_session_id=session.id,
+                )
                 return CommandResult(
                     handled=True,
                     session_id=session.id,
@@ -92,6 +118,11 @@ class CommandDispatcher:
                 checkpoint = await self._application.compact_session(
                     current_session_id,
                     trigger="manual",
+                )
+                await self._application.record_command(
+                    current_session_id,
+                    name="zip",
+                    argument=None,
                 )
                 if checkpoint is None:
                     output = "Nothing to compress: no complete new turn is available."
@@ -116,4 +147,5 @@ class CommandDispatcher:
     @classmethod
     def _format_session(cls, session: Session, current_session_id: str) -> str:
         marker = "*" if session.id == current_session_id else " "
-        return f"{marker} {cls._label(session)}\t{session.state.value}"
+        updated = session.updated_at.astimezone().isoformat(timespec="seconds")
+        return f"{marker} {cls._label(session)}\t{session.state.value}\t{updated}"

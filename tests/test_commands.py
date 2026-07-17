@@ -30,6 +30,7 @@ class FakeApplication:
         self.sessions = [_session("first-session", root, "first")]
         self.gated: list[str] = []
         self.compacted: list[str] = []
+        self.commands: list[tuple[str, str, str | None, str | None]] = []
 
     async def create_session(self, project_root: Path, *, name: str | None = None):
         session = _session(f"session-{len(self.sessions) + 1}", project_root, name)
@@ -63,6 +64,12 @@ class FakeApplication:
         self.gated.append(session_id)
         yield
 
+    async def record_command(
+        self, session_id: str, *, name: str, argument: str | None,
+        result_session_id: str | None = None,
+    ) -> None:
+        self.commands.append((session_id, name, argument, result_session_id))
+
 
 def test_parse_only_shared_commands() -> None:
     assert parse_command("hello") is None
@@ -79,11 +86,13 @@ async def test_shared_commands_switch_and_list_sessions(tmp_path: Path) -> None:
     created = await dispatcher.dispatch("/new second", session_id="first-session")
     assert created.handled and created.session_id == "session-2"
     assert app.gated == ["first-session"]
+    assert app.commands[0] == ("first-session", "new", "second", "session-2")
 
     listed = await dispatcher.dispatch("/list", session_id="session-2")
     assert "first (first-se)" in (listed.output or "")
     assert "* second (session-)" in (listed.output or "")
     assert app.gated == ["first-session"]
+    assert app.commands[-1][1] == "list"
 
     resumed = await dispatcher.dispatch("/resume first", session_id="session-2")
     assert resumed.session_id == "first-session"

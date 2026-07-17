@@ -39,8 +39,13 @@ async def test_same_session_turns_are_fifo(tmp_path: Path) -> None:
     first_task = asyncio.create_task(collect(manager.run(session_id="s1", runner=first)))
     await first_started.wait()
     second_task = asyncio.create_task(collect(manager.run(session_id="s1", runner=second)))
-    await asyncio.sleep(0)
+    for _ in range(50):
+        turns = await store.list_turns("s1")
+        if len(turns) == 2:
+            break
+        await asyncio.sleep(0.01)
     assert order == ["first-start"]
+    assert [turn.state for turn in turns] == [TurnStatus.RUNNING, TurnStatus.QUEUED]
     release_first.set()
     await asyncio.gather(first_task, second_task)
     assert order == ["first-start", "first-end", "second-start"]

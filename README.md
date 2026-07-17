@@ -59,7 +59,12 @@ src/mini_agent/
 
   model_api/
     client.py
+    retry.py
     sse.py
+
+  commands/
+    parser.py
+    dispatcher.py
 
   context/
     builder.py
@@ -68,8 +73,14 @@ src/mini_agent/
     compression.py
 
   session/
+    migrations.py
     models.py
     store.py
+
+  turns/
+    models.py
+    manager.py
+    cancellation.py
 
   skills/
     models.py
@@ -539,7 +550,7 @@ Shell 放在后期，是因为当前没有沙箱，它会显著扩大风险边�
 
 ## 14. 当前实现状态
 
-文档中的阶段 0—11 均已实现。当前版本包括：
+文档中的阶段 0–11 均已实现。当前 `v0.2.0` 版本包括：
 
 - 固定 `qwen3.7-plus` 与固定 DashScope Coding OpenAI 兼容地址
 - OpenAI Chat Completions SSE 增量解析、Tool Call 拼接、用量统计和流中断检测
@@ -551,6 +562,10 @@ Shell 放在后期，是因为当前没有沙箱，它会显著扩大风险边�
 - 命令型 Hooks：`UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`PostToolUseFailure`、`Stop`
 - MCP stdio `tools/list`、`tools/call` Provider
 - ACP Session、Prompt、增量事件、取消和权限适配
+- 同一 Session 的 Turn FIFO、不同 Session 并发、取消与重启中断恢复
+- 模型请求在首个可见输出前的安全重试和 Model Attempt 记录
+- CLI/ACP 共用 `/new`、`/list`、`/resume`、`/zip` 会话命令
+- 分阶段会话压缩、原子文件写入、预期 SHA-256 和 MCP 启动隔离
 
 实现仍遵守最初的安全边界：没有 OS 沙箱；Shell、Hook 和 MCP 子进程都拥有启动 Agent 的 Windows 用户权限。
 
@@ -563,6 +578,15 @@ C:\Python310\python.exe -m venv tmp\venv
 .\tmp\venv\Scripts\python.exe -m pip install -e ".[dev]"
 $env:MINI_AGENT_API_KEY = "你的 DashScope Coding API Key"
 .\tmp\venv\Scripts\mini-agent.exe --workspace D:\path\to\project chat
+```
+
+交互会话支持：
+
+```text
+/new [name]                 新建并切换 Session
+/list                       列出当前工作区 Session
+/resume <session-id|name>   按完整 ID、唯一 ID 前缀或名称恢复
+/zip                        主动压缩完整历史 Turn
 ```
 
 也可以使用 `DASHSCOPE_API_KEY`。API Key 只从环境变量读取，不写入配置、Session 或日志。数据默认保存在 `%LOCALAPPDATA%\MiniAgent`；可用 `MINI_AGENT_DATA_DIR` 或 `--data-dir` 覆盖。
@@ -726,6 +750,4 @@ $env:MINI_AGENT_API_KEY = "你的 API Key"
 
 ## 19. 版本规划
 
-当前代码基线为 `v0.1.0`，用于验证固定模型、SSE、Tool Loop、Session、压缩、Skills、Hooks、MCP Tools、ACP 文本协议和 Windows CLI 可以组成最小闭环。
-
-`v0.2.0` 将集中建设可靠 Turn 与会话控制：同 Session FIFO、统一取消、模型安全重试、崩溃恢复、数据库迁移、主动 `/zip` 压缩，以及 CLI/ACP 共用的 `/new`、`/list`、`/resume`、`/zip`。本版本不实现工作区切换，也不扩展 ACP 多媒体或完整 MCP 能力。详细范围、命令语义和验收条件见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+当前代码版本为 `v0.2.0`，在 `v0.1.0` 最小闭环之上完成可靠 Turn、会话控制、安全模型重试、可恢复压缩和 Tool/MCP 可靠性加固。本版本不实现工作区切换，也不扩展 ACP 多媒体或完整 MCP 能力。详细范围、命令语义和验收条件见 [docs/ROADMAP.md](docs/ROADMAP.md)。
