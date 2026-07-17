@@ -103,3 +103,31 @@ async def test_real_mcp_stdio_lifecycle(tmp_path: Path) -> None:
     finally:
         await manager.close()
     assert registry.specs() == []
+
+
+@pytest.mark.asyncio
+async def test_one_mcp_startup_failure_does_not_disable_other_servers(
+    tmp_path: Path,
+) -> None:
+    registry = ToolRegistry()
+    server_script = Path(__file__).parent / "fixtures" / "mcp_echo_server.py"
+    manager = McpManager(
+        registry,
+        [
+            McpServerConfig("broken", "definitely-not-a-real-command-mini-agent"),
+            McpServerConfig("healthy", sys.executable, (str(server_script),)),
+        ],
+    )
+    await manager.connect_all()
+    try:
+        assert "broken" in manager.failures
+        assert any(spec.name == "mcp__healthy__echo" for spec in registry.specs())
+        executor = ToolExecutor(registry, PermissionManager(AllowPermissionBroker()))
+        result = await executor.execute(
+            ToolCall("1", "mcp__healthy__echo", {"text": "still-alive"}),
+            session_id="s",
+            workspace_root=tmp_path,
+        )
+        assert not result.is_error and "still-alive" in result.content
+    finally:
+        await manager.close()

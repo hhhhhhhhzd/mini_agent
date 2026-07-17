@@ -26,20 +26,27 @@ class McpManager:
         self._registry = registry
         self._configs = configs
         self._call_timeout = timedelta(seconds=call_timeout_seconds)
-        self._stack: AsyncExitStack | None = None
+        self._stacks: dict[str, AsyncExitStack] = {}
         self._sessions: dict[str, ClientSession] = {}
+        self._failures: dict[str, str] = {}
+        self._started = False
 
     @property
     def configured(self) -> bool:
         return bool(self._configs)
 
+    @property
+    def failures(self) -> dict[str, str]:
+        return dict(self._failures)
+
     async def connect_all(self) -> None:
-        if self._stack is not None:
+        if self._started:
             return
-        stack = AsyncExitStack()
-        await stack.__aenter__()
-        try:
-            for config in self._configs:
+        self._started = True
+        for config in self._configs:
+            stack = AsyncExitStack()
+            await stack.__aenter__()
+            try:
                 transport = await stack.enter_async_context(
                     stdio_client(
                         StdioServerParameters(
@@ -52,15 +59,14 @@ class McpManager:
                 )
                 session = await stack.enter_async_context(ClientSession(*transport))
                 await session.initialize()
-                self._sessions[config.name] = session
                 await self._register_server_tools(config.name, session)
-        except BaseException:
-            await stack.aclose()
-            self._sessions.clear()
-            for config in self._configs:
+            except Exception as exc:
                 self._registry.unregister_source(f"mcp:{config.name}")
-            raise
-        self._stack = stack
+                self._failures[config.name] = f"{type(exc).__name__}: {exc}"
+                await stack.aclose()
+                continue
+            self._sessions[config.name] = session
+            self._stacks[config.name] = stack
 
     async def _register_server_tools(self, server: str, session: ClientSession) -> None:
         cursor: str | None = None
@@ -96,6 +102,10 @@ class McpManager:
         for config in self._configs:
             self._registry.unregister_source(f"mcp:{config.name}")
         self._sessions.clear()
-        if self._stack is not None:
-            stack, self._stack = self._stack, None
-            await stack.aclose()
+        stacks, self._stacks = self._stacks, {}
+        for stack in reversed(list(stacks.values())):
+            try:
+                await stack.aclose()
+            except Exception:
+                pass
+        self._started = False
