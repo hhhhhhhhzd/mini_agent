@@ -11,6 +11,8 @@ from acp.schema import (
     AgentCapabilities,
     AgentMessageChunk,
     AgentThoughtChunk,
+    AvailableCommand,
+    AvailableCommandsUpdate,
     CloseSessionResponse,
     Implementation,
     InitializeResponse,
@@ -35,6 +37,7 @@ from acp.schema import (
 )
 
 from mini_agent.core.application import AgentApplication
+from mini_agent.commands import CommandDispatcher
 from mini_agent.core.types import (
     AgentError,
     ReasoningDelta,
@@ -53,7 +56,6 @@ class AcpAgent:
         self._app = app
         self._permissions = permission_broker
         self._client: Client | None = None
-        self._prompt_tasks: dict[str, asyncio.Task[Any]] = {}
 
     def on_connect(self, conn: Client) -> None:
         self._client = conn
@@ -85,7 +87,7 @@ class AcpAgent:
                     close=SessionCloseCapabilities(),
                 ),
             ),
-            agentInfo=Implementation(name="mini-agent", title="Mini Agent", version="0.1.0"),
+            agentInfo=Implementation(name="mini-agent", title="Mini Agent", version="0.2.0"),
         )
 
     async def new_session(
@@ -98,6 +100,12 @@ class AcpAgent:
         del kwargs
         self._reject_dynamic_inputs(additional_directories, mcp_servers)
         session = await self._app.create_session(Path(cwd))
+        await self._app.bind_session(
+            channel="acp",
+            external_session_id=session.id,
+            internal_session_id=session.id,
+        )
+        await self._advertise_commands(session.id)
         return NewSessionResponse(sessionId=session.id)
 
     async def load_session(
@@ -110,12 +118,14 @@ class AcpAgent:
     ) -> LoadSessionResponse:
         del kwargs
         self._reject_dynamic_inputs(additional_directories, mcp_servers)
-        session = await self._app.resume_session(session_id)
+        internal_session_id = await self._resolve_internal(session_id)
+        session = await self._app.resume_session(internal_session_id)
         if Path(cwd).resolve() != session.project_root:
             raise RequestError.invalid_params(
                 {"message": "Session cwd does not match its stored project root"}
             )
-        await self._replay_history(session_id)
+        await self._replay_history(session_id, internal_session_id)
+        await self._advertise_commands(session_id)
         return LoadSessionResponse()
 
     async def resume_session(
@@ -128,11 +138,13 @@ class AcpAgent:
     ) -> ResumeSessionResponse:
         del kwargs
         self._reject_dynamic_inputs(additional_directories, mcp_servers)
-        session = await self._app.resume_session(session_id)
+        internal_session_id = await self._resolve_internal(session_id)
+        session = await self._app.resume_session(internal_session_id)
         if Path(cwd).resolve() != session.project_root:
             raise RequestError.invalid_params(
                 {"message": "Session cwd does not match its stored project root"}
             )
+        await self._advertise_commands(session_id)
         return ResumeSessionResponse()
 
     async def list_sessions(
@@ -152,7 +164,7 @@ class AcpAgent:
                 SessionInfo(
                     sessionId=session.id,
                     cwd=str(session.project_root),
-                    title=f"Mini Agent {session.id[:8]}",
+                    title=session.name or f"Mini Agent {session.id[:8]}",
                     updatedAt=session.updated_at.isoformat(),
                 )
                 for session in page
@@ -162,7 +174,7 @@ class AcpAgent:
 
     async def close_session(self, session_id: str, **kwargs: Any) -> CloseSessionResponse:
         del kwargs
-        await self._app.archive_session(session_id)
+        await self._app.archive_session(await self._resolve_internal(session_id))
         return CloseSessionResponse()
 
     async def prompt(self, session_id: str, prompt: list[Any], **kwargs: Any) -> PromptResponse:
@@ -174,13 +186,34 @@ class AcpAgent:
             raise RequestError.invalid_params(
                 {"message": "This agent currently accepts text ACP prompt blocks only"}
             )
-        task = asyncio.current_task()
-        if task is not None:
-            self._prompt_tasks[session_id] = task
+        internal_session_id = await self._resolve_internal(session_id)
+        command_text = "\n".join(text_parts)
+        current = await self._app.get_session(internal_session_id)
+        command = await CommandDispatcher(
+            self._app,
+            current.project_root,
+        ).dispatch(command_text, session_id=internal_session_id)
+        if command.handled:
+            if command.session_id and command.session_id != internal_session_id:
+                await self._app.bind_session(
+                    channel="acp",
+                    external_session_id=session_id,
+                    internal_session_id=command.session_id,
+                )
+            output = command.error or command.output
+            if output:
+                await self._client.session_update(
+                    session_id,
+                    AgentMessageChunk(
+                        sessionUpdate="agent_message_chunk",
+                        content=TextContentBlock(type="text", text=output),
+                    ),
+                )
+            return PromptResponse(stopReason="refusal" if command.error else "end_turn")
         usage_data: dict[str, int] | None = None
         failed = False
         try:
-            async for event in self._app.run_turn(session_id, "\n".join(text_parts)):
+            async for event in self._app.run_turn(internal_session_id, command_text):
                 update = self._event_update(event)
                 if update is not None:
                     await self._client.session_update(session_id, update)
@@ -189,10 +222,10 @@ class AcpAgent:
                 elif isinstance(event, AgentError):
                     failed = True
         except asyncio.CancelledError:
-            await self._app.record_interruption(session_id, "ACP prompt cancelled")
+            await self._app.record_interruption(
+                internal_session_id, "ACP prompt cancelled"
+            )
             return PromptResponse(stopReason="cancelled")
-        finally:
-            self._prompt_tasks.pop(session_id, None)
         usage = self._usage(usage_data)
         return PromptResponse(
             stopReason="refusal" if failed else "end_turn",
@@ -201,9 +234,7 @@ class AcpAgent:
 
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
         del kwargs
-        task = self._prompt_tasks.get(session_id)
-        if task is not None and task is not asyncio.current_task():
-            task.cancel()
+        await self._app.cancel_turn(await self._resolve_internal(session_id))
 
     async def set_session_mode(self, session_id: str, mode_id: str, **kwargs: Any) -> None:
         del session_id, mode_id, kwargs
@@ -225,18 +256,57 @@ class AcpAgent:
 
     async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         if method == "mini_agent/session/delete":
-            session_id = str(params.get("sessionId", ""))
-            await self._app.delete_session(session_id)
+            external_session_id = str(params.get("sessionId", ""))
+            await self._app.delete_session(
+                await self._resolve_internal(external_session_id)
+            )
             return {}
         raise RequestError.method_not_found(f"_{method}")
 
     async def ext_notification(self, method: str, params: dict[str, Any]) -> None:
         del method, params
 
-    async def _replay_history(self, session_id: str) -> None:
+    async def _resolve_internal(self, external_session_id: str) -> str:
+        internal_session_id = await self._app.resolve_binding(
+            channel="acp",
+            external_session_id=external_session_id,
+        )
+        if internal_session_id is not None:
+            return internal_session_id
+        await self._app.get_session(external_session_id)
+        await self._app.bind_session(
+            channel="acp",
+            external_session_id=external_session_id,
+            internal_session_id=external_session_id,
+        )
+        return external_session_id
+
+    async def _advertise_commands(self, external_session_id: str) -> None:
         if self._client is None:
             return
-        for message in await self._app.session_history(session_id):
+        commands = [
+            AvailableCommand(name="new", description="Create a new session: /new [name]"),
+            AvailableCommand(name="list", description="List sessions in this workspace"),
+            AvailableCommand(
+                name="resume",
+                description="Resume a session: /resume <session-id|name>",
+            ),
+            AvailableCommand(name="zip", description="Compress completed session history"),
+        ]
+        await self._client.session_update(
+            external_session_id,
+            AvailableCommandsUpdate(
+                sessionUpdate="available_commands_update",
+                availableCommands=commands,
+            ),
+        )
+
+    async def _replay_history(
+        self, external_session_id: str, internal_session_id: str
+    ) -> None:
+        if self._client is None:
+            return
+        for message in await self._app.session_history(internal_session_id):
             if not message.content or message.role not in {"user", "assistant"}:
                 continue
             content = TextContentBlock(type="text", text=message.content)
@@ -245,7 +315,7 @@ class AcpAgent:
                 if message.role == "user"
                 else AgentMessageChunk(sessionUpdate="agent_message_chunk", content=content)
             )
-            await self._client.session_update(session_id, update)
+            await self._client.session_update(external_session_id, update)
 
     @staticmethod
     def _reject_dynamic_inputs(

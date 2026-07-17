@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
@@ -37,16 +38,31 @@ class FakeApplication:
         self.session = make_session(root)
         self.archived = False
         self.deleted = False
+        self.sessions = {self.session.id: self.session}
+        self.bindings: dict[str, str] = {}
+        self.created = 0
 
-    async def create_session(self, root: Path):
-        self.session = make_session(root)
+    async def create_session(self, root: Path, *, name: str | None = None):
+        self.created += 1
+        session_id = "s1" if self.created == 1 else f"s{self.created}"
+        self.session = make_session(root, session_id)
+        if name:
+            object.__setattr__(self.session, "name", name)
+        self.sessions[session_id] = self.session
         return self.session
 
-    async def resume_session(self, session_id: str): return self.session
-    async def list_sessions(self): return [self.session]
+    async def get_session(self, session_id: str): return self.sessions[session_id]
+    async def resume_session(self, session_id: str): return self.sessions[session_id]
+    async def list_sessions(self, *, include_archived=True, project_root=None):
+        sessions = list(self.sessions.values())
+        return sessions if project_root is None else [s for s in sessions if s.project_root == project_root.resolve()]
+    async def resolve_session(self, reference: str, project_root: Path):
+        matches = [s for s in self.sessions.values() if s.project_root == project_root.resolve() and (s.id.startswith(reference) or s.name == reference)]
+        if len(matches) != 1: raise KeyError(reference)
+        return matches[0]
     async def archive_session(self, session_id: str):
         self.archived = True
-        return self.session
+        return self.sessions[session_id]
     async def delete_session(self, session_id: str): self.deleted = True
     async def session_history(self, session_id: str):
         return [Message(role="user", content="old"), Message(role="assistant", content="reply")]
@@ -57,6 +73,15 @@ class FakeApplication:
         yield ToolStarted(call)
         yield ToolFinished(ToolResult("c1", "read_file", "ok"))
         yield TurnCompleted({"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5})
+    async def bind_session(self, *, channel: str, external_session_id: str, internal_session_id: str):
+        self.bindings[f"{channel}:{external_session_id}"] = internal_session_id
+    async def resolve_binding(self, *, channel: str, external_session_id: str):
+        return self.bindings.get(f"{channel}:{external_session_id}")
+    async def cancel_turn(self, session_id: str): return True
+    async def compact_session(self, session_id: str, *, trigger: str = "manual"): return None
+    @asynccontextmanager
+    async def session_gate(self, session_id: str):
+        yield
 
 
 class FakeClient:
@@ -87,7 +112,10 @@ async def test_acp_lifecycle_replay_and_event_mapping(tmp_path: Path) -> None:
     created = await agent.new_session(str(tmp_path))
     assert created.session_id == "s1"
     await agent.load_session(str(tmp_path), "s1")
-    assert len(client.updates) == 2
+    replay_types = [getattr(item, "session_update", None) for _, item in client.updates]
+    assert replay_types.count("available_commands_update") == 2
+    assert replay_types.count("user_message_chunk") == 1
+    assert replay_types.count("agent_message_chunk") == 1
     response = await agent.prompt(
         "s1", [TextContentBlock(type="text", text="hello")]
     )
@@ -102,6 +130,36 @@ async def test_acp_lifecycle_replay_and_event_mapping(tmp_path: Path) -> None:
     assert app.archived
     await agent.ext_method("mini_agent/session/delete", {"sessionId": "s1"})
     assert app.deleted
+
+
+@pytest.mark.asyncio
+async def test_acp_commands_share_dispatcher_and_switch_binding(tmp_path: Path) -> None:
+    app = FakeApplication(tmp_path)
+    broker = AcpPermissionBroker()
+    agent = AcpAgent(app, broker)  # type: ignore[arg-type]
+    client = FakeClient()
+    agent.on_connect(client)  # type: ignore[arg-type]
+    created = await agent.new_session(str(tmp_path))
+
+    response = await agent.prompt(
+        created.session_id,
+        [TextContentBlock(type="text", text="/new named")],
+    )
+    assert response.stop_reason == "end_turn"
+    assert app.bindings["acp:s1"] == "s2"
+    assert app.sessions["s2"].name == "named"
+    assert any(
+        getattr(update, "session_update", None) == "agent_message_chunk"
+        and "Created session" in update.content.text
+        for _, update in client.updates
+    )
+
+    response = await agent.prompt(
+        created.session_id,
+        [TextContentBlock(type="text", text="/resume s1")],
+    )
+    assert response.stop_reason == "end_turn"
+    assert app.bindings["acp:s1"] == "s1"
 
 
 @pytest.mark.asyncio
