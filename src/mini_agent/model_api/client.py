@@ -1,16 +1,44 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Sequence
+from collections.abc import Awaitable, Callable
+import random
 
 import httpx
 from httpx_sse import aconnect_sse
 
-from mini_agent.core.types import Message, ModelEvent, ToolSpec
+from mini_agent.core.types import (
+    Message,
+    ModelAttemptFailed,
+    ModelAttemptStarted,
+    ModelEvent,
+    ReasoningDelta,
+    TextDelta,
+    ToolCall,
+    ToolSpec,
+)
+from mini_agent.model_api.retry import RetryPolicy, parse_retry_after
 from mini_agent.model_api.sse import OpenAIStreamDecoder, SSEDecodeError
 
 
 class ModelAPIError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_kind: str = "model_api",
+        status_code: int | None = None,
+        retryable: bool = False,
+        request_id: str | None = None,
+        retry_after: float | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.error_kind = error_kind
+        self.status_code = status_code
+        self.retryable = retryable
+        self.request_id = request_id
+        self.retry_after = retry_after
 
 
 class FixedModelClient:
@@ -25,6 +53,9 @@ class FixedModelClient:
         max_output_tokens: int = 16_384,
         timeout_seconds: float = 600.0,
         http_client: httpx.AsyncClient | None = None,
+        retry_policy: RetryPolicy | None = None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        random_value: Callable[[], float] = random.random,
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
@@ -35,6 +66,9 @@ class FixedModelClient:
             timeout=httpx.Timeout(timeout_seconds, connect=15.0),
             follow_redirects=False,
         )
+        self._retry_policy = retry_policy or RetryPolicy()
+        self._sleep = sleep
+        self._random_value = random_value
 
     async def close(self) -> None:
         if self._owns_client:
@@ -67,9 +101,50 @@ class FixedModelClient:
             "Content-Type": "application/json",
             "Accept": "text/event-stream",
         }
-        decoder = OpenAIStreamDecoder()
         url = f"{self._base_url}/chat/completions"
 
+        visible_output = False
+        for attempt in range(1, self._retry_policy.max_attempts + 1):
+            yield ModelAttemptStarted(attempt, self._retry_policy.max_attempts)
+            try:
+                async for event in self._stream_once(url, headers, payload):
+                    if isinstance(event, (TextDelta, ReasoningDelta, ToolCall)):
+                        visible_output = True
+                    yield event
+                return
+            except ModelAPIError as exc:
+                will_retry = (
+                    exc.retryable
+                    and not visible_output
+                    and attempt < self._retry_policy.max_attempts
+                )
+                delay = None
+                if will_retry:
+                    delay = self._retry_policy.delay_seconds(
+                        attempt,
+                        retry_after=exc.retry_after,
+                        random_value=self._random_value,
+                    )
+                yield ModelAttemptFailed(
+                    attempt=attempt,
+                    error_kind=exc.error_kind,
+                    message=self._redact(str(exc)),
+                    retryable=exc.retryable,
+                    will_retry=will_retry,
+                    request_id=exc.request_id,
+                    retry_delay_seconds=delay,
+                )
+                if not will_retry:
+                    raise
+                await self._sleep(delay or 0.0)
+
+    async def _stream_once(
+        self,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, object],
+    ) -> AsyncIterator[ModelEvent]:
+        decoder = OpenAIStreamDecoder()
         try:
             async with aconnect_sse(
                 self._client,
@@ -79,19 +154,58 @@ class FixedModelClient:
                 json=payload,
             ) as event_source:
                 response = event_source.response
+                request_id = self._request_id(response)
                 if response.status_code >= 400:
                     body = (await response.aread()).decode("utf-8", errors="replace")[:2000]
-                    body = body.replace(self._api_key, "***")
                     raise ModelAPIError(
-                        f"Model API returned HTTP {response.status_code}: {body}"
+                        self._redact(
+                            f"Model API returned HTTP {response.status_code}: {body}"
+                        ),
+                        error_kind="http_status",
+                        status_code=response.status_code,
+                        retryable=response.status_code in {429, 502, 503, 504},
+                        request_id=request_id,
+                        retry_after=parse_retry_after(response.headers.get("retry-after")),
                     )
                 async for sse in event_source.aiter_sse():
                     for event in decoder.feed(sse.data):
                         yield event
                 if not decoder.completed:
-                    raise ModelAPIError("Model stream ended before the [DONE] marker")
+                    raise ModelAPIError(
+                        "Model stream ended before the [DONE] marker",
+                        error_kind="incomplete_stream",
+                        retryable=True,
+                        request_id=request_id,
+                    )
         except ModelAPIError:
             raise
-        except (httpx.HTTPError, SSEDecodeError) as exc:
-            message = str(exc).replace(self._api_key, "***")
-            raise ModelAPIError(message) from exc
+        except httpx.TransportError as exc:
+            raise ModelAPIError(
+                self._redact(str(exc)),
+                error_kind="transport",
+                retryable=True,
+                request_id=self._request_id_from_exception(exc),
+            ) from exc
+        except SSEDecodeError as exc:
+            raise ModelAPIError(
+                self._redact(str(exc)),
+                error_kind="sse_decode",
+                retryable=False,
+            ) from exc
+
+    def _redact(self, message: str) -> str:
+        return message.replace(self._api_key, "***")
+
+    @staticmethod
+    def _request_id(response: httpx.Response) -> str | None:
+        for name in ("x-request-id", "request-id", "x-ms-request-id"):
+            if value := response.headers.get(name):
+                return value
+        return None
+
+    @staticmethod
+    def _request_id_from_exception(exc: httpx.TransportError) -> str | None:
+        response = getattr(exc, "response", None)
+        if isinstance(response, httpx.Response):
+            return FixedModelClient._request_id(response)
+        return None

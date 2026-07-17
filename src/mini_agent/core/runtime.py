@@ -10,6 +10,8 @@ from mini_agent.core.types import (
     HookNotice,
     Message,
     MessageCommitted,
+    ModelAttemptFailed,
+    ModelAttemptStarted,
     ModelResponseCompleted,
     ReasoningDelta,
     TextDelta,
@@ -54,7 +56,9 @@ class AgentRuntime:
             response_usage: dict[str, int] | None = None
             try:
                 async for event in self._model.stream(working, self._tools.specs()):
-                    if isinstance(event, TextDelta):
+                    if isinstance(event, (ModelAttemptStarted, ModelAttemptFailed)):
+                        yield event
+                    elif isinstance(event, TextDelta):
                         text_parts.append(event.text)
                         yield event
                     elif isinstance(event, ReasoningDelta):

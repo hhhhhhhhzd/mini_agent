@@ -91,6 +91,23 @@ class ModelResponseCompleted:
 
 
 @dataclass(frozen=True)
+class ModelAttemptStarted:
+    attempt: int
+    max_attempts: int
+
+
+@dataclass(frozen=True)
+class ModelAttemptFailed:
+    attempt: int
+    error_kind: str
+    message: str
+    retryable: bool
+    will_retry: bool
+    request_id: str | None = None
+    retry_delay_seconds: float | None = None
+
+
+@dataclass(frozen=True)
 class ToolStarted:
     call: ToolCall
 
@@ -123,7 +140,12 @@ class TurnCompleted:
 
 
 ModelEvent: TypeAlias = (
-    TextDelta | ReasoningDelta | ToolCall | ModelResponseCompleted
+    TextDelta
+    | ReasoningDelta
+    | ToolCall
+    | ModelResponseCompleted
+    | ModelAttemptStarted
+    | ModelAttemptFailed
 )
 AgentEvent: TypeAlias = (
     TextDelta
@@ -135,6 +157,8 @@ AgentEvent: TypeAlias = (
     | HookNotice
     | AgentError
     | TurnCompleted
+    | ModelAttemptStarted
+    | ModelAttemptFailed
 )
 
 

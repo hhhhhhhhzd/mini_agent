@@ -12,6 +12,8 @@ from mini_agent.core.types import (
     AgentEvent,
     Message,
     MessageCommitted,
+    ModelAttemptFailed,
+    ModelAttemptStarted,
     ToolFinished,
     ToolStarted,
     TurnCompleted,
@@ -251,7 +253,27 @@ class AgentApplication:
             workspace_root=session.project_root,
             messages=built_messages,
         ):
-            if isinstance(event, MessageCommitted):
+            if isinstance(event, ModelAttemptStarted):
+                await self._sessions.append_event(
+                    session_id,
+                    "model_attempt_started",
+                    {"attempt": event.attempt, "max_attempts": event.max_attempts},
+                )
+            elif isinstance(event, ModelAttemptFailed):
+                await self._sessions.append_event(
+                    session_id,
+                    "model_attempt_failed",
+                    {
+                        "attempt": event.attempt,
+                        "error_kind": event.error_kind,
+                        "message": event.message,
+                        "retryable": event.retryable,
+                        "will_retry": event.will_retry,
+                        "request_id": event.request_id,
+                        "retry_delay_seconds": event.retry_delay_seconds,
+                    },
+                )
+            elif isinstance(event, MessageCommitted):
                 await self._sessions.append_message(session_id, event.message)
             elif isinstance(event, ToolStarted):
                 await self._sessions.append_event(
