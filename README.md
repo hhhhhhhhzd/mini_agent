@@ -748,6 +748,8 @@ $env:MINI_AGENT_API_KEY = "你的 API Key"
 - `trusted` 加上 PowerShell 意味着 Agent 拥有运行它的 Windows 用户权限；建议使用专用的非管理员 Windows 用户。
 - `weixin-acp` 是非微信官方项目。扫码登录前应理解其登录令牌和账号风险；本项目不会使用已禁用的 `wx-cli` 或读取微信本地数据库。
 
+Windows Server 只有 Git 的全新环境，可以使用一键安装脚本部署私有 Python、Node.js 和 Agent 运行环境。固定目录部署步骤见 [docs/WINDOWS_SERVER_DEPLOYMENT.md](docs/WINDOWS_SERVER_DEPLOYMENT.md)。
+
 ## 19. 版本规划
 
 当前代码版本为 `v0.2.0`，在 `v0.1.0` 最小闭环之上完成可靠 Turn、会话控制、安全模型重试、可恢复压缩和 Tool/MCP 可靠性加固。本版本不实现工作区切换，也不扩展 ACP 多媒体或完整 MCP 能力。详细范围、命令语义和验收条件见 [docs/ROADMAP.md](docs/ROADMAP.md)。

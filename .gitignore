@@ -9,3 +9,6 @@ htmlcov/
 *.db-shm
 *.db-wal
 .env
+/runtime/
+/data/
+/workspace/
