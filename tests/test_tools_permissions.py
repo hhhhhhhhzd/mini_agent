@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import os
+import hashlib
 
 import pytest
 
@@ -201,3 +202,48 @@ async def test_locked_mode_allows_only_builtin_reads(tmp_path: Path) -> None:
     assert not read.is_error
     assert write.is_error and write.content == "Permission denied"
     assert broker.requests == []
+
+
+@pytest.mark.asyncio
+async def test_write_and_patch_use_expected_hash_guard(tmp_path: Path) -> None:
+    broker = RecordingBroker(GrantScope.SESSION)
+    executor = make_executor(broker)
+    target = tmp_path / "guarded.txt"
+    target.write_text("before", encoding="utf-8")
+    expected = hashlib.sha256(b"before").hexdigest()
+
+    written = await executor.execute(
+        ToolCall(
+            "1",
+            "write_file",
+            {
+                "path": "guarded.txt",
+                "content": "middle",
+                "overwrite": True,
+                "expected_sha256": expected,
+            },
+        ),
+        session_id="s1",
+        workspace_root=tmp_path,
+    )
+    assert not written.is_error
+    assert target.read_text(encoding="utf-8") == "middle"
+    assert not list(tmp_path.glob(".guarded.txt.*.tmp"))
+
+    stale = await executor.execute(
+        ToolCall(
+            "2",
+            "apply_patch",
+            {
+                "path": "guarded.txt",
+                "old_text": "middle",
+                "new_text": "after",
+                "expected_sha256": expected,
+            },
+        ),
+        session_id="s1",
+        workspace_root=tmp_path,
+    )
+    assert stale.is_error
+    assert "File changed since it was read" in stale.content
+    assert target.read_text(encoding="utf-8") == "middle"

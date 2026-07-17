@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from mini_agent.tools.builtin.common import resolve_workspace_path
+from mini_agent.tools.builtin.common import file_sha256, resolve_workspace_path
 from mini_agent.tools.types import ToolExecutionContext
 
 
@@ -24,8 +24,9 @@ async def read_file(arguments: dict[str, Any], context: ToolExecutionContext) ->
         text = path.read_text(encoding="utf-8")
         lines = text.splitlines(keepends=True)
         selected = "".join(lines[start - 1 : end])
+        header = f"[sha256: {file_sha256(path)}]\n"
         if len(selected) > max_chars:
-            return selected[:max_chars] + "\n...[content truncated]"
-        return selected
+            return header + selected[:max_chars] + "\n...[content truncated]"
+        return header + selected
 
     return await asyncio.to_thread(read)

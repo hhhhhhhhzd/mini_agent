@@ -87,6 +87,11 @@ def register_builtin_tools(registry: ToolRegistry, *, include_shell: bool = Fals
                     "path": {"type": "string"},
                     "content": {"type": "string"},
                     "overwrite": {"type": "boolean", "default": False},
+                    "expected_sha256": {
+                        "type": "string",
+                        "pattern": "^[0-9a-fA-F]{64}$",
+                        "description": "Optional SHA-256 of the existing file; reject if it changed.",
+                    },
                 },
                 "required": ["path", "content"],
                 "additionalProperties": False,
@@ -109,6 +114,11 @@ def register_builtin_tools(registry: ToolRegistry, *, include_shell: bool = Fals
                     "old_text": {"type": "string", "minLength": 1},
                     "new_text": {"type": "string"},
                     "replace_all": {"type": "boolean", "default": False},
+                    "expected_sha256": {
+                        "type": "string",
+                        "pattern": "^[0-9a-fA-F]{64}$",
+                        "description": "Optional SHA-256 from read_file; reject stale edits.",
+                    },
                 },
                 "required": ["path", "old_text", "new_text"],
                 "additionalProperties": False,

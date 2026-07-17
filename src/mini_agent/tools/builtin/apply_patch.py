@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from mini_agent.tools.builtin.common import resolve_workspace_path
+from mini_agent.tools.builtin.common import atomic_write_text, resolve_workspace_path
 from mini_agent.tools.types import ToolExecutionContext
 
 
@@ -14,6 +14,7 @@ async def apply_patch(arguments: dict[str, Any], context: ToolExecutionContext) 
     old_text = str(arguments["old_text"])
     new_text = str(arguments["new_text"])
     replace_all = bool(arguments.get("replace_all", False))
+    expected_sha256 = arguments.get("expected_sha256")
 
     def patch() -> str:
         text = path.read_text(encoding="utf-8")
@@ -25,8 +26,15 @@ async def apply_patch(arguments: dict[str, Any], context: ToolExecutionContext) 
                 f"old_text occurs {count} times; set replace_all=true or provide more context"
             )
         updated = text.replace(old_text, new_text, -1 if replace_all else 1)
-        path.write_text(updated, encoding="utf-8", newline="")
+        digest = atomic_write_text(
+            path,
+            updated,
+            expected_sha256=(str(expected_sha256) if expected_sha256 is not None else None),
+        )
         replaced = count if replace_all else 1
-        return f"Applied {replaced} replacement(s) to {path.relative_to(context.workspace_root)}"
+        return (
+            f"Applied {replaced} replacement(s) to "
+            f"{path.relative_to(context.workspace_root)} (sha256: {digest})"
+        )
 
     return await asyncio.to_thread(patch)
