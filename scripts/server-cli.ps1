@@ -1,5 +1,6 @@
 [CmdletBinding()]
 param(
+    [string]$Workspace,
     [ValidateSet("standard", "trusted", "locked")]
     [string]$PermissionMode = "trusted",
     [switch]$DisableShell,
@@ -8,12 +9,15 @@ param(
 
 $ErrorActionPreference = "Stop"
 $agentRoot = (Resolve-Path -LiteralPath (Split-Path -Parent $PSScriptRoot)).Path
-$workspace = Join-Path $agentRoot "workspace"
+if (-not $Workspace) {
+    $Workspace = Join-Path $agentRoot "workspace"
+}
+$workspacePath = (Resolve-Path -LiteralPath $Workspace).Path
 $dataDir = Join-Path $agentRoot "data"
 
 & (Join-Path $PSScriptRoot "start-cli.ps1") `
     -AgentRoot $agentRoot `
-    -Workspace $workspace `
+    -Workspace $workspacePath `
     -DataDir $dataDir `
     -PermissionMode $PermissionMode `
     -DisableShell:$DisableShell `

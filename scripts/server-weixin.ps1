@@ -1,5 +1,6 @@
 [CmdletBinding()]
 param(
+    [string]$Workspace,
     [string]$WeixinAcpVersion = "0.6.0",
     [switch]$Login,
     [switch]$DisableShell,
@@ -8,7 +9,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 $agentRoot = (Resolve-Path -LiteralPath (Split-Path -Parent $PSScriptRoot)).Path
-$workspace = Join-Path $agentRoot "workspace"
+if (-not $Workspace) {
+    $Workspace = Join-Path $agentRoot "workspace"
+}
+$workspacePath = (Resolve-Path -LiteralPath $Workspace).Path
 $dataDir = Join-Path $agentRoot "data"
 $nodeHome = Join-Path $agentRoot "runtime\node"
 $nodeExe = Join-Path $nodeHome "node.exe"
@@ -20,7 +24,7 @@ $env:PATH = "$nodeHome;$env:PATH"
 
 & (Join-Path $PSScriptRoot "start-weixin-acp.ps1") `
     -AgentRoot $agentRoot `
-    -Workspace $workspace `
+    -Workspace $workspacePath `
     -DataDir $dataDir `
     -WeixinAcpVersion $WeixinAcpVersion `
     -Login:$Login `

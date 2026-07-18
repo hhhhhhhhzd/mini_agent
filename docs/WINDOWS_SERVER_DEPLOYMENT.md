@@ -47,6 +47,14 @@ powershell -ExecutionPolicy Bypass -File `
 
 没有设置 API Key 时，启动器会以隐藏输入方式询问。
 
+指定其他工作区：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File `
+  C:\Users\Administrator\Desktop\agent\MiniAgent\scripts\server-cli.ps1 `
+  -Workspace C:\Users\Administrator\Desktop\gerlun
+```
+
 ## 首次启动微信
 
 ```powershell
@@ -61,6 +69,24 @@ powershell -ExecutionPolicy Bypass -File `
 powershell -ExecutionPolicy Bypass -File `
   C:\Users\Administrator\Desktop\agent\MiniAgent\scripts\server-weixin.ps1
 ```
+
+使用 `gerlun` 作为微信 Agent 工作区：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File `
+  C:\Users\Administrator\Desktop\agent\MiniAgent\scripts\server-weixin.ps1 `
+  -Workspace C:\Users\Administrator\Desktop\gerlun
+```
+
+微信接入只有在该进程持续运行时才会回复消息。前台运行时优先在原窗口按 `Ctrl+C` 停止；如果窗口已经丢失或进程无响应，可执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File `
+  C:\Users\Administrator\Desktop\agent\MiniAgent\scripts\server-stop.ps1 `
+  -Mode weixin
+```
+
+`-Mode cli` 只停止 CLI，`-Mode all` 停止该 MiniAgent 安装目录下的 CLI、ACP 和私有 Node.js 进程。
 
 ## 只做环境检查
 
