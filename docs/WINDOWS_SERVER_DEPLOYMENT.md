@@ -77,3 +77,10 @@ powershell -ExecutionPolicy Bypass -File `
 默认权限模式为 `trusted`，并启用 PowerShell Tool。此模式没有操作系统沙箱，Agent 拥有 Administrator 用户权限。可通过 `-DisableShell` 临时关闭 PowerShell Tool，或者在 CLI 启动时指定 `-PermissionMode standard`。
 
 升级或备份前应先停止 Agent。需要长期保留和备份的是 `MiniAgent\data`；不要删除该目录。
+
+如果使用早期的部署脚本遇到 `egg_base option: 'tmp/build' does not exist`，可先执行以下兼容性修复，再重新运行安装脚本：
+
+```powershell
+New-Item -ItemType Directory -Force `
+  C:\Users\Administrator\Desktop\agent\MiniAgent\tmp\build | Out-Null
+```

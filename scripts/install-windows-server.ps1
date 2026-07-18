@@ -54,10 +54,17 @@ $downloadRoot = Join-Path $runtimeRoot "downloads"
 $pythonHome = Join-Path $runtimeRoot "python"
 $nodeHome = Join-Path $runtimeRoot "node"
 $venvRoot = Join-Path $scriptAgentRoot "tmp\venv"
+$legacyBuildRoot = Join-Path $scriptAgentRoot "tmp\build"
 $dataRoot = Join-Path $scriptAgentRoot "data"
 $workspaceRoot = Join-Path $scriptAgentRoot "workspace"
 
-foreach ($directory in @($runtimeRoot, $downloadRoot, $dataRoot, $workspaceRoot)) {
+foreach ($directory in @(
+    $runtimeRoot,
+    $downloadRoot,
+    $legacyBuildRoot,
+    $dataRoot,
+    $workspaceRoot
+)) {
     New-Item -ItemType Directory -Path $directory -Force | Out-Null
 }
 
