@@ -25,6 +25,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mini-agent")
     parser.add_argument("--workspace", type=Path, default=Path.cwd())
     parser.add_argument("--data-dir", type=Path)
+    parser.add_argument("--config", type=Path)
     parser.add_argument("--enable-shell", action="store_true")
     sub = parser.add_subparsers(dest="command")
 
@@ -150,7 +151,7 @@ async def async_main(argv: list[str] | None = None) -> int:
         default_data = AgentConfig.resolve_data_dir(data_dir)
         return await _session_command(args, default_data)
 
-    config = AgentConfig.from_env(workspace_root=workspace, data_dir=data_dir)
+    config = AgentConfig.load(config_path=args.config, workspace_root=workspace, data_dir=data_dir)
     if args.enable_shell and not config.shell_enabled:
         config = replace(config, shell_enabled=True)
     if args.command == "skill":

@@ -12,7 +12,7 @@ from mini_agent.protocols.acp.permissions import AcpPermissionBroker
 
 
 async def async_main() -> None:
-    config = AgentConfig.from_env(workspace_root=Path.cwd())
+    config = AgentConfig.load(workspace_root=Path.cwd())
     broker = AcpPermissionBroker()
     app, _model = build_application(config, permission_broker=broker)
     await app.initialize()

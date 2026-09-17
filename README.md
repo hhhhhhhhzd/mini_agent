@@ -6,7 +6,7 @@
 
 首要目标：
 
-- API Key + 固定 API 地址 + 固定模型
+- 项目根目录 config.json 配置 API Key、API 地址和模型
 - HTTP/SSE 流式响应
 - 单 Agent，不设计多 Provider、多 Model、多 Agent 枚举
 - 模块边界清楚，后续可以独立丰富各模块
@@ -552,7 +552,7 @@ Shell 放在后期，是因为当前没有沙箱，它会显著扩大风险边�
 
 文档中的阶段 0–11 均已实现。当前 `v0.2.0` 版本包括：
 
-- 固定 `qwen3.7-plus` 与固定 DashScope Coding OpenAI 兼容地址
+- 通过 config.json 配置模型和 OpenAI 兼容地址，默认示例为 qwen3.7-plus 与 DashScope Coding 地址
 - OpenAI Chat Completions SSE 增量解析、Tool Call 拼接、用量统计和流中断检测
 - 中立内部事件、模型/工具多轮循环和 CLI
 - 工作区只读/写入 Builtin Tools，以及默认关闭的 PowerShell Tool
@@ -576,7 +576,8 @@ Shell 放在后期，是因为当前没有沙箱，它会显著扩大风险边�
 ```powershell
 C:\Python310\python.exe -m venv tmp\venv
 .\tmp\venv\Scripts\python.exe -m pip install -e ".[dev]"
-$env:MINI_AGENT_API_KEY = "你的 DashScope Coding API Key"
+Copy-Item config.example.json config.json
+# 编辑 config.json，填写 model.api_key
 .\tmp\venv\Scripts\mini-agent.exe --workspace D:\path\to\project chat
 ```
 
@@ -718,7 +719,7 @@ MINI_AGENT_ENABLE_SHELL=1
 首次扫码并在登录后直接启动：
 
 ```powershell
-$env:MINI_AGENT_API_KEY = "你的 API Key"
+# 编辑项目根目录 config.json，填写 model.api_key
 .\scripts\start-weixin-acp.ps1 `
   -Workspace D:\path\to\workspace `
   -DataDir D:\MiniAgent\data `
@@ -732,14 +733,14 @@ $env:MINI_AGENT_API_KEY = "你的 API Key"
   -Workspace D:\path\to\workspace `
   -DataDir D:\MiniAgent\data `
   -Login `
-  -PromptForApiKey
+  -ConfigPath "D:\apps\mini-agent\config.json"
 ```
 
 输入内容不会回显，仅存在于当前启动进程及其 ACP 子进程环境中，进程结束后清除。
 
 后续启动时省略 `-Login`。如需暂时关闭 PowerShell Tool，增加 `-DisableShell`。
 
-脚本要求 Node.js 22 及以上，验证 ACP Agent 可执行文件，并将 npx 下载缓存固定到 `tmp\npm-cache`。API Key 不会作为命令行参数输出；它通过进程环境传给 ACP Agent。
+脚本要求 Node.js 22 及以上，验证 ACP Agent 可执行文件，并将 npx 下载缓存固定到 `tmp\npm-cache`。API Key 不会作为命令行参数输出；Agent 从项目根目录 config.json 读取它。
 
 当前微信 ACP 接入边界：
 
@@ -753,3 +754,12 @@ Windows Server 只有 Git 的全新环境，可以使用一键安装脚本部署
 ## 19. 版本规划
 
 当前代码版本为 `v0.2.0`，在 `v0.1.0` 最小闭环之上完成可靠 Turn、会话控制、安全模型重试、可恢复压缩和 Tool/MCP 可靠性加固。本版本不实现工作区切换，也不扩展 ACP 多媒体或完整 MCP 能力。详细范围、命令语义和验收条件见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+
+
+### 模型配置文件
+
+在 Agent 项目根目录复制 `config.example.json` 为 `config.json`，填写 `model.api_key`；该文件已被 Git 忽略。`model.model_id`、`model.base_url`、上下文长度、输出上限和超时均由此文件读取，旧模型环境变量不会覆盖文件。配置启动时加载，修改后需重启。
+
+CLI 支持 `--config <文件路径>`；两种启动脚本支持 `-ConfigPath <文件路径>`。路径优先级为 CLI 显式参数、`MINI_AGENT_CONFIG`、源码项目根目录 `config.json`，不从被操作工程的工作目录自动寻找。非源码安装请显式指定配置路径。
+
+文件缺失、格式错误、必填项为空或数值非法时启动失败，不再提示输入 Key。权限、Shell 和数据目录仍沿用原有参数与环境变量。独立 session 管理命令无需模型配置。默认数据目录仍为 `%LOCALAPPDATA%\MiniAgent`，保存 `agent.db`，并可放置 `system.md`、`skills/`、`mcp.json`、`hooks.json`。

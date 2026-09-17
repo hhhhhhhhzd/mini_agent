@@ -12,7 +12,7 @@ param(
 
     [switch]$DisableShell,
 
-    [switch]$PromptForApiKey,
+    [string]$ConfigPath,
 
     [switch]$ValidateOnly
 )
@@ -25,6 +25,10 @@ if (-not $AgentRoot) {
 
 $workspacePath = (Resolve-Path -LiteralPath $Workspace).Path
 $agentRootPath = (Resolve-Path -LiteralPath $AgentRoot).Path
+if (-not $ConfigPath) {
+    $ConfigPath = Join-Path $agentRootPath "config.json"
+}
+$configFilePath = (Resolve-Path -LiteralPath $ConfigPath).Path
 $dataDirPath = [IO.Path]::GetFullPath($DataDir)
 $agentExecutable = Join-Path $agentRootPath "tmp\venv\Scripts\mini-agent.exe"
 
@@ -43,24 +47,10 @@ if ($ValidateOnly) {
     return
 }
 
-$promptedApiKey = $false
-if (-not $env:MINI_AGENT_API_KEY -and -not $env:DASHSCOPE_API_KEY) {
-    if (-not $PromptForApiKey) {
-        throw "Set MINI_AGENT_API_KEY (or DASHSCOPE_API_KEY), or pass -PromptForApiKey."
-    }
-    $secureApiKey = Read-Host "DashScope API Key" -AsSecureString
-    $credential = [PSCredential]::new("MiniAgent", $secureApiKey)
-    $plainApiKey = $credential.GetNetworkCredential().Password
-    if (-not $plainApiKey) {
-        throw "API Key cannot be empty."
-    }
-    $env:MINI_AGENT_API_KEY = $plainApiKey
-    $promptedApiKey = $true
-}
-
 $previousDataDir = [Environment]::GetEnvironmentVariable("MINI_AGENT_DATA_DIR", "Process")
 $previousPermissionMode = [Environment]::GetEnvironmentVariable("MINI_AGENT_PERMISSION_MODE", "Process")
 $previousShell = [Environment]::GetEnvironmentVariable("MINI_AGENT_ENABLE_SHELL", "Process")
+$previousConfig = [Environment]::GetEnvironmentVariable("MINI_AGENT_CONFIG", "Process")
 $locationPushed = $false
 
 function Restore-ProcessEnvironment(
@@ -76,6 +66,7 @@ function Restore-ProcessEnvironment(
 }
 
 try {
+    $env:MINI_AGENT_CONFIG = $configFilePath
     New-Item -ItemType Directory -Path $dataDirPath -Force | Out-Null
     $env:MINI_AGENT_DATA_DIR = $dataDirPath
     $env:MINI_AGENT_PERMISSION_MODE = $PermissionMode
@@ -92,13 +83,8 @@ finally {
     if ($locationPushed) {
         Pop-Location
     }
+    Restore-ProcessEnvironment "MINI_AGENT_CONFIG" $previousConfig
     Restore-ProcessEnvironment "MINI_AGENT_DATA_DIR" $previousDataDir
     Restore-ProcessEnvironment "MINI_AGENT_PERMISSION_MODE" $previousPermissionMode
     Restore-ProcessEnvironment "MINI_AGENT_ENABLE_SHELL" $previousShell
-    if ($promptedApiKey) {
-        Remove-Item Env:MINI_AGENT_API_KEY -ErrorAction SilentlyContinue
-        $plainApiKey = $null
-        $secureApiKey = $null
-        $credential = $null
-    }
 }

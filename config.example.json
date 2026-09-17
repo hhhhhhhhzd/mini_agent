@@ -1,0 +1,10 @@
+{
+  "model": {
+    "model_id": "qwen3.7-plus",
+    "base_url": "https://coding.dashscope.aliyuncs.com/v1",
+    "api_key": "",
+    "context_window": 262144,
+    "max_output_tokens": 16384,
+    "request_timeout_seconds": 600
+  }
+}

@@ -29,5 +29,4 @@ $env:PATH = "$nodeHome;$env:PATH"
     -WeixinAcpVersion $WeixinAcpVersion `
     -Login:$Login `
     -DisableShell:$DisableShell `
-    -PromptForApiKey `
     -ValidateOnly:$ValidateOnly

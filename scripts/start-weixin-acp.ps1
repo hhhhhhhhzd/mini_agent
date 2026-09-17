@@ -13,7 +13,7 @@ param(
 
     [switch]$DisableShell,
 
-    [switch]$PromptForApiKey,
+    [string]$ConfigPath,
 
     [switch]$ValidateOnly
 )
@@ -26,6 +26,10 @@ if (-not $AgentRoot) {
 
 $workspacePath = (Resolve-Path -LiteralPath $Workspace).Path
 $agentRootPath = (Resolve-Path -LiteralPath $AgentRoot).Path
+if (-not $ConfigPath) {
+    $ConfigPath = Join-Path $agentRootPath "config.json"
+}
+$configFilePath = (Resolve-Path -LiteralPath $ConfigPath).Path
 $agentExecutable = Join-Path $agentRootPath "tmp\venv\Scripts\mini-agent-acp.exe"
 
 if (-not (Test-Path -LiteralPath $agentExecutable -PathType Leaf)) {
@@ -38,21 +42,6 @@ $nodeVersionText = (& $nodeCommand.Source --version).Trim().TrimStart("v")
 $nodeMajor = [int]($nodeVersionText.Split(".")[0])
 if ($nodeMajor -lt 22) {
     throw "weixin-acp requires Node.js 22 or newer; found $nodeVersionText"
-}
-
-$promptedApiKey = $false
-if (-not $ValidateOnly -and -not $env:MINI_AGENT_API_KEY -and -not $env:DASHSCOPE_API_KEY) {
-    if (-not $PromptForApiKey) {
-        throw "Set MINI_AGENT_API_KEY (or DASHSCOPE_API_KEY), or pass -PromptForApiKey."
-    }
-    $secureApiKey = Read-Host "DashScope API Key" -AsSecureString
-    $credential = [PSCredential]::new("MiniAgent", $secureApiKey)
-    $plainApiKey = $credential.GetNetworkCredential().Password
-    if (-not $plainApiKey) {
-        throw "API Key cannot be empty."
-    }
-    $env:MINI_AGENT_API_KEY = $plainApiKey
-    $promptedApiKey = $true
 }
 
 $dataDirPath = [IO.Path]::GetFullPath($DataDir)
@@ -75,6 +64,7 @@ $previousDataDir = [Environment]::GetEnvironmentVariable("MINI_AGENT_DATA_DIR", 
 $previousPermissionMode = [Environment]::GetEnvironmentVariable("MINI_AGENT_PERMISSION_MODE", "Process")
 $previousShell = [Environment]::GetEnvironmentVariable("MINI_AGENT_ENABLE_SHELL", "Process")
 $previousNpmCache = [Environment]::GetEnvironmentVariable("npm_config_cache", "Process")
+$previousConfig = [Environment]::GetEnvironmentVariable("MINI_AGENT_CONFIG", "Process")
 $locationPushed = $false
 
 function Restore-ProcessEnvironment(
@@ -90,6 +80,7 @@ function Restore-ProcessEnvironment(
 }
 
 try {
+    $env:MINI_AGENT_CONFIG = $configFilePath
     New-Item -ItemType Directory -Path $dataDirPath -Force | Out-Null
     New-Item -ItemType Directory -Path $npmCache -Force | Out-Null
 
@@ -116,14 +107,9 @@ finally {
     if ($locationPushed) {
         Pop-Location
     }
+    Restore-ProcessEnvironment "MINI_AGENT_CONFIG" $previousConfig
     Restore-ProcessEnvironment "MINI_AGENT_DATA_DIR" $previousDataDir
     Restore-ProcessEnvironment "MINI_AGENT_PERMISSION_MODE" $previousPermissionMode
     Restore-ProcessEnvironment "MINI_AGENT_ENABLE_SHELL" $previousShell
     Restore-ProcessEnvironment "npm_config_cache" $previousNpmCache
-    if ($promptedApiKey) {
-        Remove-Item Env:MINI_AGENT_API_KEY -ErrorAction SilentlyContinue
-        $plainApiKey = $null
-        $secureApiKey = $null
-        $credential = $null
-    }
 }

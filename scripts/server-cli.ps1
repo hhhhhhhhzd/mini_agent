@@ -21,5 +21,4 @@ $dataDir = Join-Path $agentRoot "data"
     -DataDir $dataDir `
     -PermissionMode $PermissionMode `
     -DisableShell:$DisableShell `
-    -PromptForApiKey `
     -ValidateOnly:$ValidateOnly

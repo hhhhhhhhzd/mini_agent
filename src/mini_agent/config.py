@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+import json
+import math
+from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from mini_agent.tools.permissions import PermissionMode
 
@@ -16,7 +19,7 @@ DEFAULT_CONTEXT_WINDOW = 262_144
 class AgentConfig:
     """Runtime configuration for the fixed-model agent."""
 
-    api_key: str
+    api_key: str = field(repr=False)
     workspace_root: Path
     data_dir: Path
     model_id: str = FIXED_MODEL_ID
@@ -26,6 +29,64 @@ class AgentConfig:
     request_timeout_seconds: float = 600.0
     shell_enabled: bool = False
     permission_mode: PermissionMode = PermissionMode.STANDARD
+
+    @classmethod
+    def load(
+        cls,
+        *,
+        config_path: Path | None = None,
+        workspace_root: Path | None = None,
+        data_dir: Path | None = None,
+    ) -> "AgentConfig":
+        """Load model settings from the agent project's JSON configuration."""
+        path = (config_path or Path(os.getenv("MINI_AGENT_CONFIG") or
+                Path(__file__).resolve().parents[2] / "config.json")).resolve()
+        try:
+            document = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, UnicodeError, ValueError):
+            raise RuntimeError(f"Cannot read valid JSON configuration: {path}") from None
+        if not isinstance(document, dict) or not isinstance(document.get("model"), dict):
+            raise RuntimeError(f"Invalid configuration {path}: model must be an object")
+        model = document["model"]
+
+        def invalid(name: str) -> None:
+            raise RuntimeError(f"Invalid configuration {path}: model.{name}")
+
+        for name in ("api_key", "model_id", "base_url"):
+            if not isinstance(model.get(name), str) or not model[name].strip():
+                invalid(name)
+        try:
+            url = urlsplit(model["base_url"])
+            if url.scheme not in {"http", "https"} or not url.hostname or url.username or url.password or url.query or url.fragment:
+                invalid("base_url")
+        except ValueError:
+            invalid("base_url")
+        numbers = {
+            "context_window": model.get("context_window", DEFAULT_CONTEXT_WINDOW),
+            "max_output_tokens": model.get("max_output_tokens", 16384),
+            "request_timeout_seconds": model.get("request_timeout_seconds", 600.0),
+        }
+        for name, value in numbers.items():
+            allowed = (int, float) if name == "request_timeout_seconds" else (int,)
+            if type(value) not in allowed or value <= 0 or (isinstance(value, float) and not math.isfinite(value)):
+                invalid(name)
+        if numbers["max_output_tokens"] >= numbers["context_window"]:
+            invalid("max_output_tokens")
+        permission_value = os.getenv("MINI_AGENT_PERMISSION_MODE", "standard").lower()
+        try:
+            permission_mode = PermissionMode(permission_value)
+        except ValueError:
+            raise RuntimeError("Invalid MINI_AGENT_PERMISSION_MODE") from None
+        return cls(
+            api_key=model["api_key"].strip(),
+            model_id=model["model_id"].strip(),
+            base_url=model["base_url"].strip().rstrip("/"),
+            workspace_root=(workspace_root or Path.cwd()).resolve(),
+            data_dir=cls.resolve_data_dir(data_dir),
+            permission_mode=permission_mode,
+            shell_enabled=os.getenv("MINI_AGENT_ENABLE_SHELL", "0").lower() in {"1", "true", "yes"},
+            **numbers,
+        )
 
     @staticmethod
     def resolve_data_dir(data_dir: Path | None = None) -> Path:
