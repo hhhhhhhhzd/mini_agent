@@ -15,6 +15,17 @@ if (-not $Workspace) {
 $workspacePath = (Resolve-Path -LiteralPath $Workspace).Path
 $dataDir = Join-Path $agentRoot "data"
 
+if (-not $ValidateOnly) {
+    $runtimeDir = Join-Path $agentRoot "runtime"
+    New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+    [ordered]@{
+        mode = "cli"
+        workspace = $workspacePath
+        disable_shell = [bool]$DisableShell
+        permission_mode = $PermissionMode
+    } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $runtimeDir "launch.json") -Encoding UTF8
+}
+
 & (Join-Path $PSScriptRoot "start-cli.ps1") `
     -AgentRoot $agentRoot `
     -Workspace $workspacePath `

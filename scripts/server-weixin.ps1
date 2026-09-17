@@ -22,6 +22,17 @@ if (-not (Test-Path -LiteralPath $nodeExe -PathType Leaf)) {
 }
 $env:PATH = "$nodeHome;$env:PATH"
 
+if (-not $ValidateOnly) {
+    $runtimeDir = Join-Path $agentRoot "runtime"
+    New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+    [ordered]@{
+        mode = "weixin"
+        workspace = $workspacePath
+        disable_shell = [bool]$DisableShell
+        weixin_acp_version = $WeixinAcpVersion
+    } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $runtimeDir "launch.json") -Encoding UTF8
+}
+
 & (Join-Path $PSScriptRoot "start-weixin-acp.ps1") `
     -AgentRoot $agentRoot `
     -Workspace $workspacePath `

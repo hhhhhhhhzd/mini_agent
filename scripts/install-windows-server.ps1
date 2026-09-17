@@ -187,6 +187,12 @@ if ($agentVersion -ne "0.2.0") {
 }
 Write-Host "Mini Agent: $agentVersion"
 
+$configFile = Join-Path $scriptAgentRoot "config.json"
+if (-not (Test-Path -LiteralPath $configFile)) {
+    Copy-Item -LiteralPath (Join-Path $scriptAgentRoot "config.example.json") -Destination $configFile
+    Write-Host "Fill model.api_key in $configFile before starting the Agent."
+}
+
 Write-Step "Validating server launchers"
 $cliLauncher = Join-Path $PSScriptRoot "server-cli.ps1"
 $weixinLauncher = Join-Path $PSScriptRoot "server-weixin.ps1"
