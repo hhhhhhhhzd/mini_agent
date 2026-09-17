@@ -88,12 +88,14 @@ def restore_environment(root, backup):
 
 def update(root, args):
     old = git(root, "rev-parse", "HEAD")
-    branch = git(root, "symbolic-ref", "--quiet", "--short", "HEAD")
+    # Short refs can include "heads/" when a tag shares the branch name.
+    branch_ref = git(root, "symbolic-ref", "--quiet", "HEAD")
+    branch = branch_ref.removeprefix("refs/heads/")
     if git(root, "status", "--porcelain", "--untracked-files=normal"):
         raise RuntimeError("Working tree has local changes/untracked files. Preserve them before updating.")
     settings = launch_settings(root, args)
     print(f"Checking origin/{branch}...", flush=True)
-    git(root, "fetch", "origin", f"refs/heads/{branch}")
+    git(root, "fetch", "origin", branch_ref)
     target = git(root, "rev-parse", "FETCH_HEAD")
     git(root, "merge-base", "--is-ancestor", old, target)
     state_path = root / "runtime" / "update-state.json"

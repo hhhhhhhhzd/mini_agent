@@ -95,6 +95,20 @@ def test_check_only_does_not_stop_or_install(deployment):
     assert (root / "code.txt").read_text() == "old"
 
 
+@pytest.mark.parametrize("check_only", [True, False])
+def test_update_with_same_named_branch_and_tag(deployment, check_only):
+    root, args, calls, _ = deployment
+    updater.git(root, "config", "core.warnAmbiguousRefs", "true")
+    updater.git(root, "tag", "deployment")
+    assert updater.git(root, "symbolic-ref", "--quiet", "--short", "HEAD") == "heads/deployment"
+    args.check_only = check_only
+    updated, _ = updater.update(root, args)
+    assert updated is (not check_only)
+    assert (root / "code.txt").read_text() == ("old" if check_only else "new")
+    if check_only:
+        assert not calls
+
+
 def test_first_use_installs_even_after_manual_pull(deployment):
     root, args, calls, _ = deployment
     updater.git(root, "pull", "--ff-only", "origin", "deployment")
