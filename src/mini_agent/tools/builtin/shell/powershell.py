@@ -29,6 +29,7 @@ async def _terminate_process_tree(process: asyncio.subprocess.Process) -> None:
             str(process.pid),
             "/T",
             "/F",
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
@@ -55,6 +56,8 @@ async def powershell_exec(arguments: dict[str, Any], context: ToolExecutionConte
         command,
         cwd=str(cwd),
         env=_safe_environment(),
+        # Shell commands must not inherit the host's interactive or ACP input.
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
